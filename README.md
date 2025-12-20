@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # PDF Merger - Streamlit App
 
 A modern, web-based PDF merger built with Streamlit and Python.
@@ -16,3 +17,7 @@ A modern, web-based PDF merger built with Streamlit and Python.
 ```bash
 git clone https://github.com/onikanyinsola31-netizen/pdf-merger-streamlit.git
 cd pdf-merger-streamlit
+=======
+# pdf-merger-streamlit
+PDF merger using streamlit app
+>>>>>>> 1d604d6ed5a979092193819908b3ef6c878ae7c4
