@@ -1,466 +1,489 @@
-# app.py - Streamlit PDF Merger
+# app.py - Clean Minimalist PDF Merger with Size Display
 
 import streamlit as st
 import os
 import tempfile
 from pathlib import Path
-from PyPDF2 import PdfMerger, PdfReader
+from PyPDF2 import PdfMerger, PdfReader, PdfWriter
 import io
 from datetime import datetime
+import subprocess
+import sys
 
 # Page configuration
 st.set_page_config(
-    page_title="PDF Merger Pro",
+    page_title="PDF Merger",
     page_icon="📄",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Clean Minimalist CSS
 st.markdown("""
 <style>
+    /* Clean minimalist styling */
     .main-header {
-        font-size: 2.5rem;
-        color: #1E3A8A;
-        margin-bottom: 1rem;
+        font-size: 2rem;
+        color: #000000;
+        margin-bottom: 0.5rem;
+        font-weight: 600;
     }
-    .file-card {
-        background-color: #F8FAFC;
-        border: 1px solid #E2E8F0;
-        border-radius: 10px;
-        padding: 15px;
-        margin: 10px 0;
+    
+    /* Clean sidebar - white background, black text */
+    [data-testid="stSidebar"] {
+        background-color: white !important;
+        color: black !important;
     }
-    .success-box {
-        background-color: #D1FAE5;
-        border: 1px solid #10B981;
-        border-radius: 8px;
-        padding: 20px;
-        margin: 20px 0;
+    
+    [data-testid="stSidebar"] * {
+        color: #000000 !important;
     }
-    .error-box {
-        background-color: #FEE2E2;
-        border: 1px solid #EF4444;
-        border-radius: 8px;
-        padding: 15px;
-        margin: 10px 0;
+    
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] .st-emotion-cache-16idsys p {
+        color: #000000 !important;
+        font-weight: 500 !important;
     }
+    
+    /* Clean buttons */
     .stButton button {
-        width: 100%;
+        border-radius: 6px;
+        border: 1px solid #ddd;
+        transition: all 0.2s ease;
     }
-    .valid-pdf {
-        border-left: 4px solid #10B981;
+    
+    .stButton button:hover {
+        border-color: #3B82F6;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
-    .invalid-pdf {
-        border-left: 4px solid #EF4444;
+    
+    /* Size display styling */
+    .size-info {
+        background: #f8f9fa;
+        border-radius: 6px;
+        padding: 10px;
+        margin: 10px 0;
+        border: 1px solid #e9ecef;
+    }
+    
+    .size-original {
+        color: #6c757d;
+        font-size: 0.9rem;
+    }
+    
+    .size-compressed {
+        color: #198754;
+        font-weight: 500;
+        font-size: 0.9rem;
+    }
+    
+    .size-reduction {
+        color: #0d6efd;
+        font-weight: 600;
+        font-size: 1rem;
+    }
+    
+    /* Clean file list */
+    .file-item {
+        padding: 10px;
+        margin: 5px 0;
+        border: 1px solid #eee;
+        border-radius: 6px;
+        background: white;
+    }
+    
+    /* Mobile responsive */
+    @media (max-width: 768px) {
+        .main .block-container {
+            padding-top: 0.5rem;
+            padding-bottom: 0.5rem;
+        }
+        
+        [data-testid="stSidebar"] {
+            padding: 1rem !important;
+        }
+        
+        [data-testid="stSidebar"] button {
+            min-height: 44px !important;
+            font-size: 1rem !important;
+        }
+        
+        .size-info {
+            padding: 8px;
+            margin: 8px 0;
+        }
+    }
+    
+    /* Desktop sidebar fixed */
+    @media (min-width: 769px) {
+        [data-testid="stSidebar"] {
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
+
+# ========== HELPER FUNCTIONS ==========
+
+def get_file_size(file_path):
+    """Get file size in readable format"""
+    try:
+        size_bytes = os.path.getsize(file_path)
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.1f} TB"
+    except:
+        return "0 B"
+
+def get_file_size_bytes(file_path):
+    """Get file size in bytes"""
+    try:
+        return os.path.getsize(file_path)
+    except:
+        return 0
+
+def format_size(bytes_size):
+    """Format bytes to human readable string"""
+    try:
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if bytes_size < 1024.0:
+                return f"{bytes_size:.1f} {unit}"
+            bytes_size /= 1024.0
+        return f"{bytes_size:.1f} TB"
+    except:
+        return "0 B"
+
+def merge_pdfs(file_list, output_path):
+    """Merge multiple PDF files into one"""
+    merger = PdfMerger()
+    for file in file_list:
+        merger.append(file)
+    with open(output_path, 'wb') as output_file:
+        merger.write(output_file)
+    merger.close()
+    return output_path
+
+def compress_with_ghostscript(input_path, output_path, quality="Medium"):
+    """Compress PDF using Ghostscript"""
+    try:
+        # Quality settings
+        dpi_settings = {
+            "Low": 300,
+            "Medium": 200,
+            "High": 150,
+            "Maximum": 72
+        }
+        
+        dpi = dpi_settings.get(quality, 200)
+        
+        gs_command = [
+            "gs",
+            "-sDEVICE=pdfwrite",
+            "-dCompatibilityLevel=1.4",
+            "-dPDFSETTINGS=/ebook",
+            "-dNOPAUSE",
+            "-dQUIET",
+            "-dBATCH",
+            f"-dDownsampleColorImages=true",
+            f"-dDownsampleGrayImages=true",
+            f"-dDownsampleMonoImages=true",
+            f"-dColorImageResolution={dpi}",
+            f"-dGrayImageResolution={dpi}",
+            f"-dMonoImageResolution={dpi}",
+            "-sOutputFile=" + output_path,
+            input_path
+        ]
+        
+        result = subprocess.run(gs_command, capture_output=True, text=True)
+        return result.returncode == 0
+        
+    except:
+        return False
+
+# ========== SESSION STATE ==========
+
+def reset_all():
+    """Reset everything to initial state"""
+    st.session_state.uploaded_files = []
+    st.session_state.merged_pdf = None
+    st.session_state.output_filename = f"merged_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    st.session_state.compression_stats = {}
 
 # Initialize session state
 if 'uploaded_files' not in st.session_state:
     st.session_state.uploaded_files = []
 if 'merged_pdf' not in st.session_state:
     st.session_state.merged_pdf = None
-if 'merge_status' not in st.session_state:
-    st.session_state.merge_status = ""
-if 'valid_files' not in st.session_state:
-    st.session_state.valid_files = []
+if 'output_filename' not in st.session_state:
+    st.session_state.output_filename = f"merged_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+if 'compression_stats' not in st.session_state:
+    st.session_state.compression_stats = {}
 
-# ========== STEP 1: PDF VALIDATION FUNCTION ==========
-def validate_pdf(file_path):
-    """Validate if a PDF file is readable and not corrupted"""
-    try:
-        with open(file_path, 'rb') as f:
-            reader = PdfReader(f)
-            num_pages = len(reader.pages)
-            # Try to read some metadata to ensure it's truly valid
-            _ = reader.metadata
-            _ = reader.trailer
-            return True, num_pages, "Valid PDF"
-    except Exception as e:
-        error_msg = str(e)
-        if "startxref" in error_msg:
-            return False, 0, "Corrupted PDF: Invalid file structure"
-        elif "EOF" in error_msg:
-            return False, 0, "Incomplete or corrupted PDF"
-        elif "encrypted" in error_msg.lower():
-            return False, 0, "Password-protected PDF"
-        else:
-            return False, 0, f"Invalid PDF: {error_msg[:100]}"
-
-def repair_pdf(input_path, output_path):
-    """Try to repair a corrupted PDF by re-writing it"""
-    try:
-        from pypdf import PdfReader as PyPdfReader, PdfWriter
-        
-        reader = PyPdfReader(input_path)
-        writer = PdfWriter()
-        
-        # Copy all pages
-        for page in reader.pages:
-            writer.add_page(page)
-        
-        # Copy metadata if available
-        if reader.metadata:
-            writer.add_metadata(reader.metadata)
-        
-        # Save repaired version
-        with open(output_path, 'wb') as f:
-            writer.write(f)
-        
-        return True, "PDF repaired successfully"
-    except Exception as e:
-        return False, f"Could not repair: {str(e)}"
-
-def merge_pdfs(file_list, output_path):
-    """Merge multiple PDF files into one"""
-    merger = PdfMerger()
-    
-    for file in file_list:
-        merger.append(file)
-    
-    with open(output_path, 'wb') as output_file:
-        merger.write(output_file)
-    
-    merger.close()
-    return output_path
-
-def get_file_size(file_path):
-    """Get file size in readable format"""
-    size_bytes = os.path.getsize(file_path)
-    for unit in ['B', 'KB', 'MB', 'GB']:
-        if size_bytes < 1024.0:
-            return f"{size_bytes:.2f} {unit}"
-        size_bytes /= 1024.0
-    return f"{size_bytes:.2f} TB"
+# ========== MAIN APP ==========
 
 def main():
-    # Header
-    st.markdown('<h1 class="main-header">📄 PDF Merger Pro</h1>', unsafe_allow_html=True)
-    st.markdown("Merge multiple PDF files into a single document")
+    # Clean minimal header
+    st.markdown('<h1 class="main-header">📄 PDF Merger</h1>', unsafe_allow_html=True)
     
-    # Sidebar
+    # Check for Ghostscript
+    try:
+        subprocess.run(["gs", "--version"], capture_output=True, text=True)
+        gs_available = True
+    except:
+        gs_available = False
+    
+    # ========== CLEAN SIDEBAR ==========
     with st.sidebar:
-        st.header("⚙️ Settings")
+        # Only compression button - no other text
+        st.header("")
         
-        # REMOVED output_name from sidebar - MOVED TO MAIN AREA
-        st.info("**📝 Name your file** in the main area below the uploaded files")
-        
-        # Merge options
-        st.subheader("Merge Options")
-        compress = st.checkbox("Compress output PDF", value=True)
-        linearize = st.checkbox("Optimize for web viewing", value=True)
-        
-        # PDF Validation options
-        st.subheader("PDF Validation")
-        auto_validate = st.checkbox("Validate PDFs automatically", value=True)
-        attempt_repair = st.checkbox("Attempt to repair corrupted PDFs", value=False)
-        
-        # Page order
-        page_order = st.radio(
-            "Page Order",
-            ["Sequential (File1, File2, File3)", "Alternating (Page1, Page1, Page2, Page2)"]
+        # Compression toggle only
+        compress = st.checkbox(
+            "Compress PDF",
+            value=True,
+            help="Reduce file size"
         )
         
-        st.divider()
+        # Quality selector - ALWAYS SHOW WHEN COMPRESSION IS ENABLED
+        if compress:
+            quality = st.selectbox(
+                "Quality",
+                ["Low", "Medium", "High", "Maximum"],
+                index=1,
+                help="Higher compression = smaller file"
+            )
+            
+            # Show Ghostscript status only when compression is enabled
+            if not gs_available:
+                st.info("Note: Install Ghostscript for compression to work")
         
-        # Clear button
-        if st.button("🗑️ Clear All Files", use_container_width=True):
-            st.session_state.uploaded_files = []
-            st.session_state.merged_pdf = None
-            st.session_state.valid_files = []
+        # Add some spacing
+        st.write("")
+        st.write("")
+        
+        # Clear All button
+        if st.button(
+            "🗑️ Clear All",
+            use_container_width=True,
+            type="secondary",
+            help="Remove all files and reset"
+        ):
+            reset_all()
             st.rerun()
     
-    # Main content area - Two columns
+    # ========== MAIN CONTENT ==========
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.header("📁 Upload PDF Files")
-        
-        # File uploader
+        # Upload section
         uploaded_files = st.file_uploader(
-            "Drag and drop PDF files here",
+            "Upload PDFs",
             type=['pdf'],
             accept_multiple_files=True,
-            help="Select multiple PDF files to merge"
+            help="Select PDF files to merge"
         )
         
         # Process uploaded files
         if uploaded_files:
-            temp_files = []
-            validation_results = []
-            
             for uploaded_file in uploaded_files:
+                # Skip duplicates
+                existing_names = [f['name'] for f in st.session_state.uploaded_files]
+                if uploaded_file.name in existing_names:
+                    continue
+                
+                # Save file
                 temp_dir = tempfile.gettempdir()
                 temp_path = os.path.join(temp_dir, uploaded_file.name)
                 
-                # Save uploaded file
                 with open(temp_path, 'wb') as f:
                     f.write(uploaded_file.getbuffer())
                 
-                # Validate PDF if enabled
+                # Validate
                 is_valid = True
-                page_count = 0
-                validation_msg = "Not validated"
+                try:
+                    reader = PdfReader(temp_path)
+                    page_count = len(reader.pages)
+                except:
+                    is_valid = False
+                    page_count = 0
                 
-                if auto_validate:
-                    is_valid, page_count, validation_msg = validate_pdf(temp_path)
-                    
-                    # Attempt repair if invalid and repair is enabled
-                    if not is_valid and attempt_repair:
-                        repair_path = temp_path + "_repaired.pdf"
-                        repair_success, repair_msg = repair_pdf(temp_path, repair_path)
-                        if repair_success:
-                            # Validate the repaired version
-                            is_valid, page_count, validation_msg = validate_pdf(repair_path)
-                            if is_valid:
-                                temp_path = repair_path  # Use repaired version
-                                validation_msg = f"Repaired: {validation_msg}"
-                
-                temp_files.append({
+                st.session_state.uploaded_files.append({
                     'name': uploaded_file.name,
                     'path': temp_path,
                     'size': uploaded_file.size,
                     'is_valid': is_valid,
-                    'page_count': page_count,
-                    'validation_msg': validation_msg
+                    'page_count': page_count
                 })
-            
-            st.session_state.uploaded_files = temp_files
-            
-            # Separate valid and invalid files
-            valid_files = [f for f in temp_files if f['is_valid']]
-            invalid_files = [f for f in temp_files if not f['is_valid']]
-            st.session_state.valid_files = valid_files
-            
-            # Show validation summary
-            if invalid_files and auto_validate:
-                st.error(f"⚠️ {len(invalid_files)} invalid PDF file(s) detected")
-                for invalid in invalid_files:
-                    with st.expander(f"❌ {invalid['name']} - {invalid['validation_msg']}", expanded=False):
-                        st.write(f"**Issue:** {invalid['validation_msg']}")
-                        st.write(f"**Size:** {get_file_size(invalid['path'])}")
-                        if attempt_repair:
-                            st.info("Repair was attempted but unsuccessful")
         
-        # Display uploaded files
+        # Display files
         if st.session_state.uploaded_files:
-            st.subheader(f"📋 Selected Files ({len(st.session_state.uploaded_files)} files)")
+            # File list header
+            st.write(f"**Files ({len(st.session_state.uploaded_files)})**")
             
+            # List files
             for i, file_info in enumerate(st.session_state.uploaded_files):
-                with st.expander(f"{'✅' if file_info['is_valid'] else '❌'} {i+1}. {file_info['name']}", expanded=not file_info['is_valid']):
-                    col_a, col_b = st.columns([3, 1])
-                    with col_a:
-                        st.write(f"**Size:** {get_file_size(file_info['path'])}")
-                        
-                        if file_info['page_count'] > 0:
-                            st.write(f"**Pages:** {file_info['page_count']}")
-                        else:
-                            st.write("**Pages:** Unknown")
-                        
-                        if not file_info['is_valid'] and auto_validate:
-                            st.error(f"**Status:** {file_info['validation_msg']}")
-                        elif auto_validate:
-                            st.success(f"**Status:** {file_info['validation_msg']}")
-                    
-                    with col_b:
-                        if st.button(f"Remove", key=f"remove_{i}"):
-                            st.session_state.uploaded_files.pop(i)
-                            if i < len(st.session_state.valid_files):
-                                st.session_state.valid_files.pop(i)
-                            st.rerun()
-        
-        # ======== NEW: OUTPUT FILENAME SECTION (Right below files) ========
-        if st.session_state.uploaded_files:
-            st.markdown("---")
-            st.header("📝 Name Your Merged File")
+                col_f1, col_f2, col_f3 = st.columns([3, 2, 1])
+                with col_f1:
+                    st.write(file_info['name'])
+                with col_f2:
+                    st.write(get_file_size(file_info['path']))
+                with col_f3:
+                    if st.button("✕", key=f"del_{i}"):
+                        st.session_state.uploaded_files.pop(i)
+                        st.rerun()
             
-            col_name1, col_name2 = st.columns([3, 1])
+            # Calculate total original size
+            total_original_size = sum(f['size'] for f in st.session_state.uploaded_files if f['is_valid'])
             
-            with col_name1:
-                output_name = st.text_input(
-                    "**Filename for merged PDF:**",
-                    value=f"merged_document_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                    help="Enter any name you want for the merged PDF file",
-                    key="output_filename"
-                )
-                
-                # Auto-add .pdf if missing
-                if output_name and not output_name.lower().endswith('.pdf'):
+            # Output filename - SIMPLE VERSION
+            st.write("")
+            st.write("**Output Name**")
+            
+            output_name = st.text_input(
+                "",
+                value=st.session_state.output_filename,
+                key="filename_input",
+                label_visibility="collapsed"
+            )
+            
+            if output_name:
+                if not output_name.lower().endswith('.pdf'):
                     output_name = output_name + ".pdf"
-                    st.success(f"✅ Added .pdf extension: **{output_name}**")
-                elif output_name:
-                    st.info(f"📄 File will be saved as: **{output_name}**")
-            
-            with col_name2:
-                st.markdown("**Quick Options:**")
-                quick_col1, quick_col2 = st.columns(2)
-                with quick_col1:
-                    if st.button("📅", help="Date-based name", use_container_width=True):
-                        st.session_state.output_filename = f"merged_{datetime.now().strftime('%Y%m%d')}.pdf"
-                        st.rerun()
-                with quick_col2:
-                    if st.button("📄", help="Simple name", use_container_width=True):
-                        st.session_state.output_filename = "merged_documents.pdf"
-                        st.rerun()
-                
-                if st.button("🔄 Reset", type="secondary", use_container_width=True):
-                    st.session_state.output_filename = f"merged_document_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-                    st.rerun()
-            
-            st.caption("💡 This name will be used when you click 'Merge PDFs Now'")
-
+                st.session_state.output_filename = output_name
+    
     with col2:
-        st.header("🔄 Merge Action")
+        # Merge section
+        valid_files = [f for f in st.session_state.uploaded_files if f['is_valid']]
+        valid_count = len(valid_files)
         
-        # Get valid file count
-        valid_count = len(st.session_state.valid_files)
-        
-        if valid_count > 1:
-            # Show file count
-            st.metric("📊 Ready to Merge", f"{valid_count} valid PDFs")
+        if valid_count >= 2:
+            # Calculate total original size
+            total_original_size = sum(f['size'] for f in valid_files)
             
-            # Make sure output_name is defined
-            if 'output_name' not in locals():
-                output_name = f"merged_document_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+            # Status
+            col_s1, col_s2 = st.columns(2)
+            with col_s1:
+                st.metric("Files", valid_count)
+            with col_s2:
+                # Show compression status
+                if compress:
+                    st.metric("Quality", quality)
+                else:
+                    st.metric("Compress", "Off")
             
-            if st.button("✨ **Merge PDFs Now**", type="primary", use_container_width=True, key="merge_button"):
-                with st.spinner("Merging PDFs..."):
+            # Show original size
+            if total_original_size > 0:
+                st.write("")
+                st.write(f"**Original:** {format_size(total_original_size)}")
+            
+            # Merge button
+            if st.button("Merge PDFs", type="primary", use_container_width=True):
+                with st.spinner(""):
                     try:
-                        # Create output path
+                        # Prepare
                         temp_dir = tempfile.gettempdir()
-                        output_path = os.path.join(temp_dir, output_name)
+                        output_path = os.path.join(temp_dir, st.session_state.output_filename)
+                        valid_file_paths = [f['path'] for f in valid_files]
                         
-                        # Get only valid file paths
-                        valid_file_paths = [f['path'] for f in st.session_state.valid_files]
+                        # Store original size
+                        original_size = total_original_size
                         
-                        if not valid_file_paths:
-                            st.error("No valid PDF files to merge!")
-                            return
+                        # Merge
+                        merged_path = merge_pdfs(valid_file_paths, output_path)
                         
-                        # Try different PDF libraries if PyPDF2 fails
-                        try:
-                            # Try with PyPDF2 first
-                            from PyPDF2 import PdfMerger
-                            merger = PdfMerger()
-                            for file_path in valid_file_paths:
-                                merger.append(file_path)
-                            
-                            with open(output_path, 'wb') as output_file:
-                                merger.write(output_file)
-                            merger.close()
-                            
-                        except Exception as pdf_error:
-                            # Fallback to pypdf library
-                            try:
-                                st.info("Trying alternative PDF library...")
-                                from pypdf import PdfMerger as PyPdfMerger
-                                merger = PyPdfMerger()
-                                for file_path in valid_file_paths:
-                                    merger.append(file_path)
-                                
-                                with open(output_path, 'wb') as output_file:
-                                    merger.write(output_file)
-                                merger.close()
-                                
-                            except Exception as fallback_error:
-                                raise Exception(f"Both PDF libraries failed:\n1. {pdf_error}\n2. {fallback_error}")
+                        # Compress if requested and Ghostscript available
+                        compressed_size = None
+                        if compress and gs_available:
+                            compressed_path = os.path.join(temp_dir, "compressed_" + st.session_state.output_filename)
+                            if compress_with_ghostscript(merged_path, compressed_path, quality):
+                                # Use compressed version
+                                import shutil
+                                shutil.copy2(compressed_path, output_path)
+                                compressed_size = get_file_size_bytes(output_path)
+                                try:
+                                    os.remove(compressed_path)
+                                except:
+                                    pass
                         
-                        # Store in session state
+                        # If no compression or compression failed, get final size
+                        if compressed_size is None:
+                            compressed_size = get_file_size_bytes(output_path)
+                        
+                        # Calculate reduction
+                        reduction = 0
+                        if original_size > 0 and compressed_size > 0:
+                            reduction = ((original_size - compressed_size) / original_size) * 100
+                        
+                        # Store compression stats
+                        st.session_state.compression_stats = {
+                            'original_size': original_size,
+                            'compressed_size': compressed_size,
+                            'reduction': reduction,
+                            'compressed': compress and gs_available
+                        }
+                        
+                        # Store result
                         st.session_state.merged_pdf = output_path
-                        st.session_state.merge_status = "success"
-                        
-                        st.success(f"✅ Successfully merged {valid_count} PDF files!")
-                        st.balloons()
-                        
-                        # Show file info
-                        file_size = get_file_size(output_path)
-                        total_pages = sum(f['page_count'] for f in st.session_state.valid_files)
-                        st.info(f"**Output:** {output_name}\n**Size:** {file_size}\n**Total Pages:** {total_pages}")
+                        st.success("")
                         
                     except Exception as e:
-                        error_msg = str(e)
-                        if "startxref" in error_msg or "incorrect startxref" in error_msg:
-                            st.error("""
-                            ❌ PDF File Error: One or more PDF files are corrupted.
-                            
-                            **Solutions:**
-                            1. Try different PDF files
-                            2. Re-download the PDFs from original source
-                            3. Use PDFs created from Word/Google Docs
-                            4. Check if PDFs are password-protected
-                            5. Enable 'Attempt to repair' in settings
-                            """)
-                        elif "encrypted" in error_msg.lower():
-                            st.error("""
-                            ❌ Password-protected PDF detected.
-                            
-                            **Solution:**
-                            1. Remove password protection from PDFs before uploading
-                            2. Use PDFs without security restrictions
-                            """)
-                        else:
-                            st.error(f"❌ Error merging PDFs: {error_msg}")
-                        st.session_state.merge_status = "error"
+                        st.error("Error")
         
         elif valid_count == 1:
-            if auto_validate:
-                st.warning(f"Need at least 2 valid PDF files to merge. You have 1 valid PDF.")
-            else:
-                st.warning("Upload at least 2 PDF files to merge")
-        elif len(st.session_state.uploaded_files) > 0 and valid_count == 0:
-            st.error("No valid PDF files detected! Check file validation above.")
+            st.write("Add more PDFs")
+        elif st.session_state.uploaded_files:
+            st.write("Check PDFs")
         else:
-            st.info("Upload PDF files to begin")
+            st.write("Upload PDFs")
         
-        # Download section
+        # Download section with size display
         if st.session_state.merged_pdf and os.path.exists(st.session_state.merged_pdf):
-            st.markdown("---")
-            st.header("📥 Download")
+            st.write("")
+            st.write("**Download**")
             
-            # Make sure output_name is defined for download
-            if 'output_name' not in locals():
-                output_name = os.path.basename(st.session_state.merged_pdf)
+            # Show size information
+            if st.session_state.compression_stats:
+                stats = st.session_state.compression_stats
+                original_size = stats.get('original_size', 0)
+                compressed_size = stats.get('compressed_size', 0)
+                reduction = stats.get('reduction', 0)
+                was_compressed = stats.get('compressed', False)
+                
+                if was_compressed and original_size > 0 and compressed_size > 0:
+                    st.markdown(f"""
+                    <div class="size-info">
+                        <div class="size-original">Original: {format_size(original_size)}</div>
+                        <div class="size-compressed">Compressed: {format_size(compressed_size)}</div>
+                        <div class="size-reduction">Reduced by: {reduction:.1f}%</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                elif original_size > 0:
+                    st.markdown(f"""
+                    <div class="size-info">
+                        <div class="size-compressed">Size: {format_size(original_size)}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
             
-            # Show download info
-            col_d1, col_d2 = st.columns([2, 1])
-            with col_d1:
-                st.success(f"**Ready to download:** {output_name}")
-                st.caption(f"Size: {get_file_size(st.session_state.merged_pdf)}")
-            with col_d2:
-                with open(st.session_state.merged_pdf, "rb") as file:
-                    st.download_button(
-                        label="⬇️ Download",
-                        data=file,
-                        file_name=output_name,
-                        mime="application/pdf",
-                        use_container_width=True,
-                        type="primary"
-                    )
+            with open(st.session_state.merged_pdf, "rb") as f:
+                st.download_button(
+                    "Download",
+                    data=f,
+                    file_name=st.session_state.output_filename,
+                    mime="application/pdf",
+                    use_container_width=True
+                )
             
-            # Clear merge button
-            if st.button("🗑️ Clear & Start Over", type="secondary", use_container_width=True):
+            # Reset button
+            if st.button("New Merge", use_container_width=True, type="secondary"):
                 st.session_state.merged_pdf = None
+                st.session_state.compression_stats = {}
                 st.rerun()
-    
-    # Footer (OUTSIDE the columns, at the very bottom)
-    st.divider()
-    with st.expander("ℹ️ How to Use & Tips"):
-        st.markdown("""
-        ### Step-by-Step:
-        1. **📁 Upload PDFs** - Select your PDF files
-        2. **✅ Check validation** - See which files are valid
-        3. **📝 Name your file** - Enter filename (right above this section)
-        4. **🔄 Merge** - Click 'Merge PDFs Now' button
-        5. **📥 Download** - Get your merged PDF
-        
-        ### Quick Tips:
-        - Name your file before merging
-        - Invalid files won't be merged
-        - Enable 'Attempt to repair' for corrupted PDFs
-        - All processing happens locally
-        """)
 
 if __name__ == "__main__":
     main()
