@@ -3,12 +3,14 @@
 
 A modern, web-based PDF merger built with Streamlit and Python.
 
-## Features
-- Drag & Drop Interface - Easy file upload
-- File Preview - See file details before merging  
-- Customizable Options - Compression, optimization, page order
-- Local Processing - No files uploaded to servers
-- Instant Download - Get merged PDF immediately
+## ✨ Features
+
+- **Merge Multiple PDFs**: Combine multiple PDF files into a single document
+- **Smart Compression**: Reduce file size with Ghostscript-powered compression
+- **Quality Settings**: Choose from Low, Medium, High, or Maximum compression
+- **Clean Interface**: Minimalist design focused on usability
+- **Docker Ready**: Easy deployment with pre-installed dependencies
+- **Mobile Friendly**: Responsive design works on all devices
 
 ## Installation
 
